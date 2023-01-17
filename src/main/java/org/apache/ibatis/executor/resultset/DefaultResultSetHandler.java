@@ -442,7 +442,7 @@ public class DefaultResultSetHandler implements ResultSetHandler {
         // 进行自动映射，借助metaObject给rowValue设置值；  applyAutomaticMappings 和 applyPropertyMappings 配合才能设置需要的数据
         foundValues = applyAutomaticMappings(rsw, resultMap, metaObject, null) || foundValues;
       }
-      // 根据 <resultMap> 节点中配置的映射关系进行映射
+      // 根据 <resultMap> 节点中配置的映射关系进行数据映射
       foundValues = applyPropertyMappings(rsw, resultMap, metaObject, lazyLoader, null) || foundValues;
       foundValues = lazyLoader.size() > 0 || foundValues;
       rowValue = foundValues || configuration.isReturnInstanceForEmptyRow() ? rowValue : null;
@@ -831,25 +831,54 @@ public class DefaultResultSetHandler implements ResultSetHandler {
 
   private Object getNestedQueryMappingValue(ResultSet rs, MetaObject metaResultObject, ResultMapping propertyMapping, ResultLoaderMap lazyLoader, String columnPrefix)
       throws SQLException {
+    // 获取关联查询 id，id = 命名空间 + <association> 的 select 属性值
     final String nestedQueryId = propertyMapping.getNestedQueryId();
     final String property = propertyMapping.getProperty();
+    // 根据 nestedQueryId 获取 MappedStatement
     final MappedStatement nestedQuery = configuration.getMappedStatement(nestedQueryId);
     final Class<?> nestedQueryParameterType = nestedQuery.getParameterMap().getType();
+    /*
+     * 生成关联查询语句参数对象，参数类型可能是一些包装类，Map 或是自定义的实体类，
+     * 具体类型取决于配置信息。以上面的例子为基础，下面分析不同配置对参数类型的影响：
+     *   1. <association column="author_id">
+     *      column 属性值仅包含列信息，参数类型为 author_id 列对应的类型，这里为 Integer
+     *
+     *   2. <association column="{id=author_id, name=title}">
+     *      column 属性值包含了属性名与列名的复合信息，MyBatis 会根据列名从 ResultSet 中
+     *      获取列数据，并将列数据设置到实体类对象的指定属性中，比如：
+     *          Author{id=1, name="MyBatis 源码分析系列文章导读", age=null, ....}
+     *      或是以键值对 <属性, 列数据> 的形式，将两者存入 Map 中。比如：
+     *          {"id": 1, "name": "MyBatis 源码分析系列文章导读"}
+     *
+     *      至于参数类型到底为实体类还是 Map，取决于关联查询语句的配置信息。比如：
+     *          <select id="findAuthor">  ->  参数类型为 Map
+     *          <select id="findAuthor" parameterType="Author"> -> 参数类型为实体类
+     */
     final Object nestedQueryParameterObject = prepareParameterForNestedQuery(rs, propertyMapping, nestedQueryParameterType, columnPrefix);
     Object value = null;
     if (nestedQueryParameterObject != null) {
+      // 获取 BoundSql
       final BoundSql nestedBoundSql = nestedQuery.getBoundSql(nestedQueryParameterObject);
       final CacheKey key = executor.createCacheKey(nestedQuery, nestedQueryParameterObject, RowBounds.DEFAULT, nestedBoundSql);
       final Class<?> targetType = propertyMapping.getJavaType();
+      // 检查一级缓存是否保存了关联查询结果
       if (executor.isCached(nestedQuery, key)) {
+        /*
+         * 从一级缓存中获取关联查询的结果，并通过 metaResultObject
+         * 将结果设置到相应的实体类对象中
+         */
         executor.deferLoad(nestedQuery, metaResultObject, property, key, targetType);
         value = DEFERED;
       } else {
+        // 创建结果加载器
         final ResultLoader resultLoader = new ResultLoader(configuration, executor, nestedQuery, nestedQueryParameterObject, targetType, key, nestedBoundSql);
+        // 检测当前属性是否需要延迟加载
         if (propertyMapping.isLazy()) {
+          // 添加延迟加载相关的对象到 loaderMap 集合中
           lazyLoader.addLoader(property, metaResultObject, resultLoader);
           value = DEFERED;
         } else {
+          // 直接执行关联查询
           value = resultLoader.loadResult();
         }
       }

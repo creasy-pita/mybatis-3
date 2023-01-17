@@ -50,12 +50,14 @@ public class ResultLoaderMap {
   private final Map<String, LoadPair> loaderMap = new HashMap<String, LoadPair>();
 
   public void addLoader(String property, MetaObject metaResultObject, ResultLoader resultLoader) {
+    // 将属性名转为大写
     String upperFirst = getUppercaseFirstProperty(property);
     if (!upperFirst.equalsIgnoreCase(property) && loaderMap.containsKey(upperFirst)) {
       throw new ExecutorException("Nested lazy loaded result property '" + property +
               "' for query id '" + resultLoader.mappedStatement.getId() +
               " already exists in the result map. The leftmost property of all lazy loaded properties must be unique within a result map.");
     }
+    // 创建 LoadPair，并将 <大写属性名，LoadPair对象> 键值对添加到 loaderMap 中
     loaderMap.put(upperFirst, new LoadPair(property, metaResultObject, resultLoader));
   }
 
@@ -76,8 +78,10 @@ public class ResultLoaderMap {
   }
 
   public boolean load(String property) throws SQLException {
+    // 从 loaderMap 中移除 property 所对应的 LoadPair
     LoadPair pair = loaderMap.remove(property.toUpperCase(Locale.ENGLISH));
     if (pair != null) {
+      // 加载结果
       pair.load();
       return true;
     }
@@ -180,7 +184,7 @@ public class ResultLoaderMap {
       if (this.resultLoader == null) {
         throw new IllegalArgumentException("resultLoader is null");
       }
-
+      // 调用重载方法
       this.load(null);
     }
 
@@ -205,17 +209,21 @@ public class ResultLoaderMap {
         this.resultLoader = new ResultLoader(config, new ClosedExecutor(), ms, this.mappedParameter,
                 metaResultObject.getSetterType(this.property), null, null);
       }
-
+      // 线程安全检测
       /* We are using a new executor because we may be (and likely are) on a new thread
        * and executors aren't thread safe. (Is this sufficient?)
        *
        * A better approach would be making executors thread safe. */
       if (this.serializationCheck == null) {
         final ResultLoader old = this.resultLoader;
+        // 重新创建新的 ResultLoader 和 ClosedExecutor，ClosedExecutor 是非线程安全的
         this.resultLoader = new ResultLoader(old.configuration, new ClosedExecutor(), old.mappedStatement,
                 old.parameterObject, old.targetType, old.cacheKey, old.boundSql);
       }
-
+      /*
+       * 调用 ResultLoader 的 loadResult 方法加载结果，
+       * 并通过 metaResultObject 设置结果到实体类对象中
+       */
       this.metaResultObject.setValue(property, this.resultLoader.loadResult());
     }
 
